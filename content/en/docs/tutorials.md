@@ -25,7 +25,7 @@ This quick start guide will walk you through deploying a simple Volcano Job. By 
 
 ### Step 1: Create a Volcano Job
 Create a file named vcjob-quickstart.yaml with the following content:
-```shell
+```yaml
 # vcjob-quickstart.yaml
 apiVersion: batch.volcano.sh/v1alpha1
 kind: Job
@@ -34,17 +34,13 @@ metadata:
 spec:
   minAvailable: 3
   schedulerName: volcano
-  # If you omit the 'queue' field, the 'default' queue will be used.
-  # queue: default
   policies:
-    # If a pod fails (e.g., due to an application error), restart the entire job.
     - event: PodFailed
       action: RestartJob
   tasks:
     - replicas: 3
       name: completion-task
       policies:
-      # When this specific task completes successfully, mark the entire job as Complete.
       - event: TaskCompleted
         action: CompleteJob
       template:
@@ -58,9 +54,9 @@ spec:
               name: busybox-container
               resources:
                 requests:
-                  cpu: 1
+                  cpu: 100m
                 limits:
-                  cpu: 1
+                  cpu: 100m
           restartPolicy: Never
 ```
 This job creates three pods and schedules the pods together as a group. The pod template uses a simple busybox container and sleeps for 100 seconds. 
@@ -69,69 +65,19 @@ If the pod is completed, the job will also convert to completed state.
 ### Step 2: Monitor the Job and Pod Status
 You can observe the progress of your VolcanoJob and its associated Pod.
 
-First, check the VolcanoJob status. You should see output similar to this (the exact timestamps and UIDs will differ):
-```shell
-# kubectl get vcjob quickstart-job -oyaml
+First, check the VolcanoJob status:
+```bash
+kubectl get vcjob quickstart-job -oyaml
+```
+You should see output similar to this:
+```yaml
 apiVersion: batch.volcano.sh/v1alpha1
 kind: Job
-metadata:
-  # ... (metadata details) ...
-  name: quickstart-job
-  namespace: default
-  # ...
-spec:
-  maxRetry: 3
-  minAvailable: 3
-  policies:
-  - action: RestartJob
-    event: PodFailed
-  queue: default
-  schedulerName: volcano
-  tasks:
-  - maxRetry: 3
-    minAvailable: 3
-    name: completion-task
-    policies:
-    - action: CompleteJob
-      event: TaskCompleted
-    replicas: 3
-    template:
-      metadata: {}
-      spec:
-        containers:
-        - command:
-          - sh
-          - -c
-          - echo "Job is running and will complete!"; sleep 100; echo "Job done!"
-          image: busybox:latest
-          name: busybox-container
-          resources:
-            limits:
-              cpu: "1"
-            requests:
-              cpu: "1"
-        restartPolicy: Never
+# ...
 status:
-  conditions:
-  - lastTransitionTime: "2025-05-28T08:39:22Z"
-    status: Pending
-  - lastTransitionTime: "2025-05-28T08:39:23Z"
-    status: Pending
-  - lastTransitionTime: "2025-05-28T08:39:27Z"
-    status: Pending
-  - lastTransitionTime: "2025-05-28T08:39:28Z"
-    status: Pending
-  - lastTransitionTime: "2025-05-28T08:39:30Z"
-    status: Running
-  minAvailable: 3
-  running: 3
   state:
-    lastTransitionTime: "2025-05-28T08:39:30Z"
     phase: Running
-  taskStatusCount:
-    completion-task:
-      phase:
-        Running: 3
+  # ...
 ```
 
 Next, check the status of the Pod created by the Volcano Job:
@@ -181,79 +127,35 @@ kind: Deployment
 metadata:
   name: my-app-deployment
   annotations:
-    # Crucial for gang scheduling: This annotation tells Volcano to treat this deployment as a gang,
-    # requiring at least 2 pods to be schedulable together before any are launched.
     scheduling.volcano.sh/group-min-member: "2"
-  labels:
-    app: my-app
 spec:
-  replicas: 3 # We desire 3 replicas for our application
+  replicas: 3
   selector:
     matchLabels:
       app: my-app
   template:
     metadata:
-      # annotations:
-      #   Optional: You can also specify a specific Volcano queue for the PodGroup created by this deployment.
-      #   scheduling.volcano.sh/queue-name: "my-deployment-queue"
       labels:
         app: my-app
     spec:
-      schedulerName: volcano # Crucial: ensures the Volcano scheduler is used for this deployment's pods
+      schedulerName: volcano
       containers:
         - name: my-container
           image: busybox
-          command: ["sh", "-c", "echo 'Hello Volcano from Deployment'; sleep 3600"] # A long-running command for demonstration
+          command: ["sh", "-c", "echo 'Hello Volcano from Deployment'; sleep 3600"]
           resources:
             requests:
-              cpu: 1
+              cpu: 100m
             limits:
-              cpu: 1
+              cpu: 100m
 ```
-
-### Step 2: Observe the Automatically Created PodGroup and Pods
-
-When you apply a Deployment (or StatefulSet) with the `scheduling.volcano.sh/group-min-member` annotation, Volcano automatically creates a PodGroup resource. 
-This PodGroup is responsible for enforcing the gang scheduling constraints for the pods belonging to your workload.
 
 Check the PodGroup status:
 ```bash
-kubectl get pg podgroup-[UID of Replicaset] -oyaml
-```
-You should see output similar to this:
-```yaml
-apiVersion: scheduling.volcano.sh/v1beta1
-kind: PodGroup
-metadata:
-  # ...
-  name: podgroup-09e95eb0-e520-4b50-a15c-c14cad844674
-  namespace: default
-  ownerReferences:
-  - apiVersion: apps/v1
-    blockOwnerDeletion: true
-    controller: true
-    kind: ReplicaSet
-    name: my-app-deployment-74644c8849
-    uid: 09e95eb0-e520-4b50-a15c-c14cad844674
-  # ...
-spec:
-  minMember: 2
-  minResources:
-    count/pods: "2"
-    cpu: "2"
-    limits.cpu: "2"
-    pods: "2"
-    requests.cpu: "2"
-  queue: default
-status:
-  conditions:
-  - lastTransitionTime: "2025-05-28T09:08:13Z"
-    reason: tasks in gang are ready to be scheduled
-    status: "True"
-    transitionID: e0b1508e-4b77-4dea-836f-0b14f9ca58df
-    type: Scheduled
-  phase: Running
-  running: 3
+# First, find the PodGroup name (usually starts with 'podgroup-')
+kubectl get pg
+# Then inspect it:
+kubectl get pg <podgroup-name> -oyaml
 ```
 You will observe that Volcano's scheduler ensures that at least minMember (2 in this example) pods can be scheduled together before it allows any pods from this deployment to be launched. 
 If there aren't enough resources for these pods, these pods will keep pending.
@@ -279,25 +181,16 @@ Create the queue in your cluster:
 ```bash
 kubectl create -f queue.yaml
 ```
-A new queue will be created and turn to Open state:
+A new queue will be created:
+```bash
+kubectl get queue development-queue -oyaml
+```
+Expected output:
 ```yaml
-# kubectl get queue development-queue -oyaml
 apiVersion: scheduling.volcano.sh/v1beta1
 kind: Queue
-metadata:
-  # ...
-  name: development-queue
-  # ...
-spec:
-  capability:
-    cpu: 2
-  parent: root
-  reclaimable: false
-  weight: 1
+# ...
 status:
-  allocated:
-    cpu: "0"
-    memory: "0"
   state: Open
 ```
 
@@ -365,8 +258,8 @@ status:
 
 ```
 
+---
 
+## Next Steps: Advanced Concepts
 
-
-
-
+Ready to tackle production-grade challenges? Check out our **[Advanced Concepts Tutorial Series](/en/docs/advanced-tutorials/)** to learn how to orchestrate Distributed Training (TensorFlow), Big Data (Spark), and GPU Resource Management.
